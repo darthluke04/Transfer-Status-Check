@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from "@/hooks/use-toast";
+import { useSettings } from '@/context/settings-context';
 
 const StatusDisplay = ({ status, message }: { status: Status; message: string }) => {
   const icon = useMemo(() => {
@@ -68,6 +69,7 @@ export default function FolderFileFinderPage() {
   
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { settings } = useSettings();
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -91,7 +93,6 @@ export default function FolderFileFinderPage() {
         return;
     }
 
-    // Reset states on new upload
     setStatuses(folderConfig.map(fc => ({ id: fc.id, status: 'pending', message: 'Awaiting selection.', foundFileDetails: {} })));
     setSelectedYear('');
     setSelectedDate('');
@@ -136,8 +137,11 @@ export default function FolderFileFinderPage() {
   };
 
   const validateFolders = useCallback((files: File[], year: string, date: string) => {
+    console.log(`--- Starting Validation for ${year}/${date} ---`);
     const newStatuses = folderConfig.map(config => {
+      console.log(`\nChecking Category: ${config.type} ${config.subType || ''}`);
       if (!config.rules || config.rules.length === 0) {
+        console.log(`   - No rules defined. Skipping.`);
         return {
           id: config.id,
           status: 'pending' as Status,
@@ -150,75 +154,86 @@ export default function FolderFileFinderPage() {
       const requiredFileTypes = new Set(config.requiredFiles);
       const foundFileTypes = new Set<string>();
       const foundFileDetails: Record<string, string[]> = {};
+      const timeRangeForConfig = settings.timeCheckEnabled ? settings.timeRanges[config.id] : undefined;
 
       for (const file of files) {
-        if (!file.webkitRelativePath.startsWith(basePath)) {
-            continue;
-        }
+        if (!file.webkitRelativePath.startsWith(basePath)) continue;
 
         const fileDir = file.webkitRelativePath.substring(0, file.webkitRelativePath.lastIndexOf('/'));
         const extension = file.name.split('.').pop()?.toLowerCase();
 
-        if (!extension || !config.requiredFiles.includes(extension)) {
-          continue;
-        }
-        
+        if (!extension || !config.requiredFiles.includes(extension)) continue;
+
         for (const rule of config.rules) {
           const fullPatternForRegex = `${basePath}/${rule.pathPattern}`;
           const patternRegex = new RegExp('^' + fullPatternForRegex.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "'").replace(/\\'/g, "'").replace(/\\\*/g, '.*') + '$');
-          const pathTest = patternRegex.test(fileDir);
-
-          if (!pathTest) {
+          
+          console.log(` [DEBUG] File: ${file.webkitRelativePath}`);
+          console.log(`   - Rule Path: "${rule.pathPattern}"`);
+          console.log(`   - Regex: ${patternRegex}`);
+          console.log(`   - Testing against Dir: "${fileDir}"`);
+          
+          if (!patternRegex.test(fileDir)) {
+            console.log(`   - Path Match: false`);
             continue;
           }
+          console.log(`   - Path Match: true`);
 
           if (rule.fileNameKeywords) {
             const nameLower = file.name.toLowerCase();
             const hasKeyword = rule.fileNameKeywords.some(keyword => nameLower.includes(keyword.toLowerCase()));
-            if (!hasKeyword) {
-              continue;
-            }
+             console.log(`   - Keyword Check: Filename is "${nameLower}". Required: ${rule.fileNameKeywords.join(', ')}. Match: ${hasKeyword}`);
+            if (!hasKeyword) continue;
+          }
+
+          if (settings.timeCheckEnabled && timeRangeForConfig) {
+            const fileDate = new Date(file.lastModified);
+            const fileHour = fileDate.getHours();
+            const timeMatch = fileHour >= timeRangeForConfig.start && fileHour <= timeRangeForConfig.end;
+            console.log(`   - Time Check: File time is ${fileDate.toLocaleTimeString()}. Hour: ${fileHour}. Required: ${timeRangeForConfig.start}-${timeRangeForConfig.end}. Match: ${timeMatch}`);
+            if (!timeMatch) continue;
           }
           
+          console.log(`   - SUCCESS: Rule matched for file ${file.name}`);
           foundFileTypes.add(extension);
 
           if (rule.category) {
-            if (!foundFileDetails[extension]) {
-              foundFileDetails[extension] = [];
-            }
+            if (!foundFileDetails[extension]) foundFileDetails[extension] = [];
             if (!foundFileDetails[extension].includes(rule.category)) {
               foundFileDetails[extension].push(rule.category);
             }
           }
-          break; 
         }
       }
       
       const allFound = [...requiredFileTypes].every(ext => foundFileTypes.has(ext));
+      let finalStatus: Status;
+      let finalMessage: string;
 
       if (allFound) {
-        return { 
-            id: config.id, 
-            status: 'passing' as Status, 
-            message: 'All required file types found.',
-            foundFileDetails,
-        };
+        finalStatus = 'passing';
+        finalMessage = 'All required file types found.';
       } else {
         const missing = [...requiredFileTypes].filter(ext => !foundFileTypes.has(ext));
-        return {
-          id: config.id,
-          status: 'failing' as Status,
-          message: `Missing types: ${missing.join(', ')}`,
-          foundFileDetails,
-        };
+        finalStatus = 'failing';
+        finalMessage = `Missing types: ${missing.join(', ')}`;
       }
+      console.log(` --> Status for ${config.type}: ${finalStatus.toUpperCase()} ${finalStatus === 'failing' ? `(${finalMessage})` : ''}`);
+      return { 
+          id: config.id, 
+          status: finalStatus, 
+          message: finalMessage,
+          foundFileDetails,
+      };
     });
+    console.log(`\n--- Validation Complete ---`);
     setStatuses(newStatuses);
-  }, []);
+  }, [settings]);
   
   const handleScan = () => {
     if (!selectedYear || !selectedDate) return;
     setIsScanning(true);
+    // Use a timeout to allow UI to update to "Scanning..."
     setTimeout(() => {
         validateFolders(allFiles, selectedYear, selectedDate);
         setIsScanning(false);
@@ -238,13 +253,13 @@ export default function FolderFileFinderPage() {
   }, [statuses]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground p-4 sm:p-6 md:p-8">
+    <div className="p-4 sm:p-6 md:p-8">
       <main className="max-w-7xl mx-auto">
         <Card className="shadow-lg">
           <CardHeader>
              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
-                  <CardTitle className="font-headline text-3xl">Folder File Finder</CardTitle>
+                  <CardTitle className="font-headline text-3xl">File Validator</CardTitle>
                   <CardDescription className="mt-2 text-base">
                     Upload your '01_TRANSFERS' folder, then select a year and date to scan.
                   </CardDescription>

@@ -2,6 +2,7 @@ import type {Metadata} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { SettingsProvider } from '@/context/settings-context';
+import { Header } from '@/components/layout/Header';
 
 export const metadata: Metadata = {
   title: 'Folder File Finder',
@@ -23,7 +24,10 @@ export default function RootLayout({
       </head>
       <body className="font-body antialiased">
         <SettingsProvider>
-          {children}
+           <div className="min-h-screen bg-background text-foreground">
+              <Header />
+              <main>{children}</main>
+            </div>
           <Toaster />
         </SettingsProvider>
       </body>

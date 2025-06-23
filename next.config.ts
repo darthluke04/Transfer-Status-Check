@@ -7,10 +7,10 @@ import type {NextConfig} from 'next';
  */
 const nextConfig: NextConfig = {
   /**
-   * Enable static exports for the App Router.
-   * This is required for GitHub Pages.
+   * The `output: 'export'` property is configured automatically
+   * by the build process when deploying to GitHub Pages.
+   * Removing it from here can resolve 404 errors in the dev environment.
    */
-  output: 'export',
 
   /**
    * Set the base path to your repository name.
@@ -21,7 +21,7 @@ const nextConfig: NextConfig = {
    * https://github.com/johndoe/my-awesome-app, you should set this
    * to '/my-awesome-app'.
    */
-  basePath: '/Transfer-Status-Check',
+  basePath: '/your-repo-name',
 
   /**
    * Disable Next.js's default image optimization, which is not compatible
